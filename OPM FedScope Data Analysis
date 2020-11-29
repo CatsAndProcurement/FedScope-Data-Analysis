@@ -1,0 +1,120 @@
+# -*- coding: utf-8 -*-
+
+"""
+
+Created on Mon Nov 23 18:28:00 2020
+
+@author: CatsAndProcurement
+
+The purpose of this Python script is to demonstrate one way of analyzing U.S. 
+federal government employee data from the Office of Personnel Management 
+(OPM). OPM's FedScope dataset contains individual, anonymized information on 
+most civilian government employees. Exceptions include many employees working 
+in national security-related positions and a few other categories; see the 
+following link for agency coverage:
+https://www.fedscope.opm.gov/datadefn/aehri_sdm.asp#cpdf3
+
+FedScope raw data is is made available quarterly in a large (~150MB) 
+TXT file compressed in a ZIP file, published via the following web page:
+https://www.opm.gov/data/index.aspx
+
+This script uses Pandas (a Python math module) to analyze FedScope data on 
+contracting employees (occupational code 1102). The script assumes that you 
+have already downloaded the relevant data (see link above) and unzipped it to 
+the same directory as the script.
+
+"""
+
+# Pandas is a Python tool for advanced data analysis
+import pandas as pd
+# Numpy is another commonly used math tool in Python
+import numpy as np
+# OS lets you perform basic Windows processes
+import os
+# MatPlotLib makes it easy to plot out chart graphics
+import matplotlib.pyplot as plt
+
+# Creating dictionary of cabinet agencies (plus military departments)
+# Context: FedScope provides data on subagencies, but analyzing cabinet agencies requires the creation of a new data element
+lookup_AGY = {'AGY_acronym':['ST','TR','DD','AR','NV','AF','DJ','IN','AG','CM','DL','HE','HU','TD','DN','ED','VA','HS'],
+              'Agency':['State','Treasury','DOD','Army','Navy','Air Force','Justice','Interior','Agriculture','Commerce','Labor','HHS','HUD','Transportation','Energy','Education','VA','DHS']}
+# Converting dictionary into Pandas dataframe
+lookup_AGY_df = pd.DataFrame(lookup_AGY)
+
+# Creating dictionary of General Schedule (GS) equivalent pay grade
+# Context: The GS system is used by OPM to categorize most federal employees on a scale of 1 to 15; see explainer linked below
+# https://www.opm.gov/policy-data-oversight/pay-leave/pay-systems/general-schedule
+lookup_GS = {'GS_string':['**','01','02','03','04','05','06','07','08','09','10','11','12','13','14','15'],
+             'GS_int':['',1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],
+             'GS equivalent':['Other or unlabeled','GS-1','GS-2','GS-3','GS-4','GS-5','GS-6','GS-7','GS-8','GS-9','GS-10','GS-11','GS-12','GS-13','GS-14','GS-15']}
+# Converting dictionary into Pandas dataframe
+lookup_GS_df = pd.DataFrame(lookup_GS)
+
+# Allows input of an agency when this script is run
+print('\nThis Python script looks up data on federal contracting employees (occupational code 1102) by cabinet agency, aggregates it, and puts it into a graph. '+
+      'It uses the OPM-published FedScope dataset, which should be downloaded and unzipped to the same directory as this script from the following URL:\n'+
+      'https://www.opm.gov/data/index.aspx'+
+      '\nSee below a list of agency names (plus military departments, which are separate from DOD in the FedScope data). '+
+      'Enter one of them to specify the data you want to look at (entering anything else will just show data for all reported agencies).\n')
+# Prints the list of agency names so the user can type whichever one they want
+print(lookup_AGY['Agency'])
+# Asks user for an input agency name
+AGY_name = input()
+print('\n')
+# Finds the row number of the user-selected agency name in the lookup table 'lookup_AGY', defined above
+AGY_row = lookup_AGY_df[lookup_AGY_df['Agency'] == AGY_name].index[0]
+# Finds the FedScope acronym for the user-selected agency name in the lookup table 'lookup_AGY'
+AGY_acronym = lookup_AGY_df.iloc[AGY_row]['AGY_acronym']
+
+# Figures out the filename for the FedScope dataset
+# Context: New FedScope TXT datasets are published each quarter; they all start with "FACTDATA_" but end with quarter/year-specific labels, e.g. "FACTDATA_JUN2020.TXT"
+for lookup_file in os.listdir():
+    if 'FACTDATA_' == lookup_file[:len('FACTDATA_')]:
+        # Creates a string variable with the full filepath for the FedScope dataset
+        file_dir = os.getcwd()+'\\'+lookup_file
+print(file_dir)
+
+# Reads the full FedScope dataset into a Pandas dataframe
+df = pd.read_csv(file_dir)
+
+# Creates a new column in the dataframe with 2-digit agency acronyms for each row
+# Context: FedScope uses 4-digit subagency codes ('AGYSUB'); the first 2 digits of those codes represent subagencies' parent agencies
+df['AGY'] = df['AGYSUB'].astype(str).str[:2]
+
+# Deletes all data apart from that for contracting employees (occupational code 1102)
+# Context: Detects either integer or string values, due to issues with the way Pandas reads FedScope data
+df = df.loc[(df['OCC'] == 1102) | (df['OCC'] == '1102')]
+
+# If a valid agency was selected by the user, deletes all data apart from data for that agency
+# Otherwise, all agencies remain included in dataframe
+if AGY_name in lookup_AGY_df.values:
+    df = df.loc[df['AGY'] == AGY_acronym]
+else:
+    pass
+
+# Writes the new, smaller dataset as a CSV file to the same directory as the raw TXT dataset
+# Context: Uses a try/except error handler in case there is some issue with writing the file
+try:
+    df.to_csv(os.getcwd()+'\\FedScope '+AGY_name+' 1102 data.csv')
+except Exception:
+    pass
+
+# Converts all the GS-equivalent values in the dataset to integers, just in case any have been tracked as strings for whatever reason
+df['GSEGRD'] = pd.to_numeric(df['GSEGRD'])
+
+# Counts number of employees by GS-equivalent category, places data into the equivalent of an Excel pivot table
+df_pvt = df.groupby('GSEGRD').count()
+# Deletes all but a single column to make charting simpler (they should all be the same anyway at this point)
+df_pvt = df_pvt[['AGY']]
+
+# Replaces the 'pivot table' dataframe's index values with clearer labels
+for i in range (0,len(lookup_GS_df)):
+    df_pvt.rename(index={lookup_GS_df.loc[i,'GS_int']:lookup_GS_df.loc[i,'GS equivalent']},inplace=True)
+
+# Prints out a label and the 'pivot table' data itself
+print('\nData: Number of reported 1102 (contracting) employees in '+AGY_name+'\n')
+print(df_pvt)
+
+# Creates bar chart visualizing the number of 1102 contracting employees in the agency
+df_pvt['AGY'].plot.bar(figsize=(12,8))
+
